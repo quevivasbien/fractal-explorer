@@ -1,0 +1,10 @@
+LICENSE
+pyproject.toml
+setup.cfg
+src/fractal-explorer/__init__.py
+src/fractal-explorer/fractal_explorer.py
+src/fractal-explorer/fractals.py
+src/fractal_explorer_quevivasbien.egg-info/PKG-INFO
+src/fractal_explorer_quevivasbien.egg-info/SOURCES.txt
+src/fractal_explorer_quevivasbien.egg-info/dependency_links.txt
+src/fractal_explorer_quevivasbien.egg-info/top_level.txt

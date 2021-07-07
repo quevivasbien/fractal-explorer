@@ -1,0 +1,28 @@
+Metadata-Version: 2.1
+Name: fractal-explorer-quevivasbien
+Version: 0.0.1
+Summary: Simple GUI for exploring the Mandelbrot set
+Home-page: https://github.com/quevivasbien/fractal-explorer
+Author: Mckay Jensen
+Author-email: jensenm@uchicago.edu
+License: UNKNOWN
+Project-URL: Bug Tracker, https://github.com/quevivasbien/fractal-explorer/issues
+Platform: UNKNOWN
+Classifier: Programming Language :: Python :: 3
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Operating System :: OS Independent
+Requires-Python: >=3.6
+Description-Content-Type: text/markdown
+License-File: LICENSE
+
+This package includes a python GUI `fractal_explorer.py` that allows the user to explore the Mandelbrot set. It also includes some additional functions in `fractals.py` that can be used to generate other fractal types related to the Mandelbrot set (e.g. Julia sets). The code supports multiprocessing and GPU processing with CUDA.
+
+To use the fractal explorer GUI, launch `fractal_explorer.py` with arguments to determine the horizontal resolution and whether to use the GPU instead of the CPU:
+
+```python
+python fractal_explorer.py [pixelwidth] [use_gpu]
+```
+
+`pixelwidth` should be an integer, and `use_gpu` should be either 0 (use CPU) or 1 (use GPU).
+
+
