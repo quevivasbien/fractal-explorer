@@ -7,6 +7,8 @@ Updated on Thu Jul 01 2021
 @author: mckay
 """
 
+import sys
+import os
 import numpy as np
 import imageio
 from numba import jit, cuda
@@ -17,11 +19,11 @@ COLORIZE = True
 TEAL = (84, 147, 146)
 GRAY = (178, 182, 183)
 TAN = (195, 155, 114)
-REDDISH = (199, 91, 82)
+ORANGE = (212, 135, 40)
 RED = (190, 67, 66)
 
 ncores = cpu_count()
-
+    
 
 @jit
 def gen_mandeltype(iterfunct,
@@ -32,7 +34,7 @@ def gen_mandeltype(iterfunct,
         pixelheight = int(pixelwidth * (ystop - ystart) / (xstop - xstart))
     x = np.linspace(xstart, xstop, pixelwidth)
     y = np.linspace(ystart, ystop, pixelheight)
-    grid = np.zeros((len(y), len(x)), dtype=np.uint16)
+    grid = np.zeros((pixelheight, pixelwidth))
     # Iterate over grid and test for divergence at each pixel
     for row in range(len(y)):
         for col in range(len(x)):
@@ -49,50 +51,57 @@ def gen_mandeltype(iterfunct,
                     break
                 if absz < break_lim or abs((abs(last_z) - absz) / absz) < break_lim:
                     i = 0
-                    break
-            # Save grid value as maxiter minus iterations to exceed lim
-            grid[row][col] = i
+            # Save grid value as maxiter minus iterations to exceed lim,
+            # grid values are normalized to be between -1 and 1
+            # negative values mean that point is part of the mandelbrot set
+            if i == 0:
+                # scrunch to range (-1, 0)
+                grid[row, col] = -((absz-2)/2)**4
+            else:
+                grid[row, col] = i / maxiter
     # Return values in interval (0, 1)
-    return grid / maxiter
+    return grid
 
 @jit
-def bw_to_tetragradient(x, c0, c1, c2, c3):
-    """Takes a value x between 0 and 1 and outputs (r, g, b) colors"""
-    if x < 0.25:
+def bw_to_quintagradient(x, c0, c1, c2, c3, c4):
+    """Takes a value x between -1 and 1 and outputs (r, g, b) colors"""
+    if x < 0:
+        y = -x
+        return (y * c0[0] + (1-y) * c1[0],
+                y * c0[1] + (1-y) * c1[1],
+                y * c0[2] + (1-y) * c1[2])
+    elif x < 0.25:
         y = x * 4
-        return (y * c1[0] + (1-y) * c0[0],
-                y * c1[1] + (1-y) * c0[1],
-                y * c1[2] + (1-y) * c0[2])
-    elif x < 0.5:
-        y = (x - 0.25) * 4
         return (y * c2[0] + (1-y) * c1[0],
                 y * c2[1] + (1-y) * c1[1],
                 y * c2[2] + (1-y) * c1[2])
-    else:
-        y = x * 2 - 1
+    elif x < 0.5:
+        y = (x - 0.25) * 4
         return (y * c3[0] + (1-y) * c2[0],
                 y * c3[1] + (1-y) * c2[1],
                 y * c3[2] + (1-y) * c2[2])
+    else:
+        y = x * 2 - 1
+        return (y * c4[0] + (1-y) * c3[0],
+                y * c4[1] + (1-y) * c3[1],
+                y * c4[2] + (1-y) * c3[2])
 
 @jit
-def construct_rgb_matrices(grid, c0, c1, c2, c3):
+def construct_rgb_matrices(grid, c0, c1, c2, c3, c4):
     red = np.empty(grid.shape)
     green = np.empty(grid.shape)
     blue = np.empty(grid.shape)
     for i in range(grid.shape[0]):
         for j in range(grid.shape[1]):
-            if grid[i, j] == 0:
-                red[i, j], green[i, j], blue[i, j] = c0
-            else:
-                red[i, j], green[i, j], blue[i, j] \
-                    = bw_to_tetragradient(grid[i, j], c0, c1, c2, c3)
+            red[i, j], green[i, j], blue[i, j] \
+                = bw_to_quintagradient(grid[i, j], c0, c1, c2, c3, c4)
     return np.stack((red.astype(np.uint8),
                      green.astype(np.uint8),
                      blue.astype(np.uint8)), axis=-1)
 
 def mandelbrot_scale(grid, maxiter):
     if COLORIZE:
-        return construct_rgb_matrices(grid, RED, TAN, TEAL, GRAY)
+        return construct_rgb_matrices(grid, RED, ORANGE, TAN, TEAL, GRAY)
     else:
         return (255 * grid).astype(np.uint8)
 
@@ -163,12 +172,13 @@ def multicore_helper(args):
 
 
 def gen_mandelbrot_multicore(xstart=-2, xstop=1, ystart=-1.5, ystop=1.5,
-                             pixelwidth=3000, maxiter=1000, lim=2,
+                             pixelwidth=3000, pixelheight=0, maxiter=1000, lim=2,
                              n_processes=ncores):
     breaks = np.linspace(xstart, xstop, n_processes+1)
     pixelwidths = [pixelwidth // n_processes]*n_processes
     pixel_remainder = pixelwidth % n_processes
-    pixelheight = int(pixelwidth * (ystop - ystart) / (xstop - xstart))
+    if pixelheight == 0:
+        pixelheight = int(pixelwidth * (ystop - ystart) / (xstop - xstart))
     for i in range(pixel_remainder):
         pixelwidths[i] += 1
     with Pool(n_processes) as p:
@@ -197,8 +207,11 @@ def mandel_iter(grid, x, y):
                 break
             if absz < 1e-10 or abs((abs(last_z) - absz) / absz) < 1e-10:
                 k = 0
-                break
-        grid[i, j] = k
+        if k == 0:
+            # scrunch absz to range (-1, 0)
+            grid[i, j] = -((absz-2)/2)**4
+        else:
+            grid[i, j] = k / 1000
 
 
 def gen_mandelbrot_gpu(xstart=-2, xstop=2, ystart=-2, ystop=2,
@@ -206,17 +219,16 @@ def gen_mandelbrot_gpu(xstart=-2, xstop=2, ystart=-2, ystop=2,
                        threads_per_block=(32, 32)):
     if pixelheight == 0:
         pixelheight = int(pixelwidth * (ystop - ystart) / (xstop - xstart))
-    print(pixelwidth, pixelheight)
     x = np.linspace(xstart, xstop, pixelwidth)
     y = np.linspace(ystart, ystop, pixelheight)
-    grid = np.zeros((pixelheight, pixelwidth), dtype=np.uint16)
+    grid = np.empty((pixelheight, pixelwidth))
     # Iterate over grid and test for divergence at each pixel
     blocks_per_grid_x = np.ceil(pixelwidth / threads_per_block[1]).astype(int)
     blocks_per_grid_y = np.ceil(pixelheight / threads_per_block[0]).astype(int)
     mandel_iter[(blocks_per_grid_y, blocks_per_grid_x),
                    threads_per_block](grid, x, y)
     # Return values in interval (0, 1)
-    return mandelbrot_scale(grid / 1000, 1000) if scale else grid / 1000
+    return mandelbrot_scale(grid, 1000) if scale else grid
 
 
 def save(grid, filename):
@@ -282,8 +294,8 @@ def multiproc_mandelbrot(args):
 
 def gen_mandelbrot_zoom(xrange1, yrange1, xrange0=(-2,1), yrange0=(-1.5, 1.5),
                         pixelwidth=512, maxiter=1000,
-                        nframes=100, fps=20, saveas='mandelbrot_zoom.mp4',
-                        n_processes=10, buffer_frames=10, zoom_factor=1e13):
+                        nframes=200, fps=30, saveas='mandelbrot_zoom.mp4',
+                        n_processes=10, buffer_frames=30, zoom_factor=1e13):
     pixelheight = int(pixelwidth * (yrange0[1] - yrange0[0]) 
                       / (xrange0[1] - xrange0[0]))
     t = (np.logspace(0, -1, nframes, base=zoom_factor) - 1/zoom_factor) \
@@ -310,4 +322,48 @@ def gen_mandelbrot_zoom(xrange1, yrange1, xrange0=(-2,1), yrange0=(-1.5, 1.5),
     imageio.mimwrite(uri=saveas,
                      ims=[f[:width, :height] for f in frames],
                      fps=fps)
-    
+
+def gen_mandelbrot_zoom_gpu(xrange1, xrange2,
+                            xrange0=(-2,1), yrange0=(-1.5, 1.5),
+                            pixelwidth=512, nframes=200, fps=30,
+                            save_loc='~/Documents/python/',
+                            buffer_frames=30, zoom_factor=1e13,
+                            keep_frames=False):
+    save_loc = os.path.expanduser(save_loc)
+    if not os.path.isdir(save_loc):
+        os.mkdir(save_loc)
+    pixelheight = int(pixelwidth * (yrange0[1] - yrange0[0]) 
+                      / (xrange0[1] - xrange0[0]))
+    t = (np.logspace(0, -1, nframes, base=zoom_factor) - 1/zoom_factor) \
+        / (1-1/zoom_factor)
+    xstarts = t * xrange0[0] + (1-t) * xrange1[0]
+    xends = t * xrange0[1] + (1-t) * xrange1[1]
+    ystarts = t * yrange0[0] + (1-t) * yrange1[0]
+    yends = t * yrange0[1] + (1-t) * yrange1[1]
+    frames = []
+    for i in range(nframes):
+        f = gen_mandelbrot_gpu(xstart=xstarts[i], xstop=xends[i],
+                               ystart=ystarts[i], ystop=yends[i],
+                               pixelwidth=pixelwidth, pixelheight=pixelheight)
+        if keep_frames:
+            if not os.path.isdir(os.path.join(save_loc, 'frames')):
+                os.mkdir(os.path.join(save_loc, 'frames'))
+            imageio.imwrite(uri=os.path.join(save_loc, 'frames', f'frame_{i}.png'),
+                            im=f)
+        frames.append(f)
+        if i % 10 == 9:
+            print(f'Completed {i+1} of {nframes} frames')
+    imageio.mimwrite(uri=os.path.join(save_loc, 'zoom.mp4'), ims=frames, fps=fps)
+        
+
+if __name__ == '__main__' and len(sys.argv) > 1:
+    args = sys.argv
+    xrange1 = (float(args[1]), float(args[2]))
+    yrange1 = (float(args[3]), float(args[4]))
+    pixelwidth = int(args[5])
+    nframes = int(args[6])
+    save_loc = args[7]
+    keep_frames = (args[8] == '1')
+    gen_mandelbrot_zoom_gpu(xrange1, yrange1, (-64/27, 32/27), (-1, 1),
+                            pixelwidth, nframes=nframes, save_loc=save_loc,
+                            keep_frames=keep_frames)
